@@ -91,23 +91,27 @@ try {
 
     $order_id = (int) $db->lastInsertId();
 
-    // 2. Trigger AI Broker Agent Matchmaking Pipeline
-    $broker = new BrokerAgent($db);
-    $matchResult = $broker->matchOrder($order_id);
+    // 2. Trigger Async AI Broker Matchmaking (Non-blocking cURL call)
+    $app_url = defined('APP_URL') && !empty(APP_URL) ? APP_URL : 'http://localhost:8000';
+    $async_url = rtrim($app_url, '/') . '/api/run_broker_async.php?order_id=' . $order_id;
 
-    echo json_encode([
-        'success' => true,
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $async_url);
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
+    curl_setopt($ch, CURLOPT_TIMEOUT_MS, 300); // 300ms non-blocking trigger timeout
+    curl_setopt($ch, CURLOPT_NOSIGNAL, 1);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, false);
+    @curl_exec($ch);
+    @curl_close($ch);
+
+    jsonResponse(true, [
         'order_id' => $order_id,
-        'matched' => (bool) ($matchResult['matched'] ?? false),
-        'message' => $matchResult['message'] ?? 'Order placed and processed by AI Broker.',
-        'match' => $matchResult['match'] ?? null
-    ], JSON_UNESCAPED_SLASHES);
+        'status'   => 'queued',
+        'message'  => 'Order placed successfully and queued for AI matchmaking.'
+    ], null, 200);
 
 } catch (Throwable $e) {
     error_log("Place Order API Error: " . $e->getMessage());
-    http_response_code(500);
-    echo json_encode([
-        'success' => false,
-        'error' => 'Server error processing order: ' . $e->getMessage()
-    ]);
+    jsonResponse(false, null, 'Server error processing order: ' . $e->getMessage(), 500);
 }

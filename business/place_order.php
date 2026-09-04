@@ -187,21 +187,12 @@ document.getElementById('orderForm').addEventListener('submit', async function(e
         return;
     }
 
-    // Show AI Processing Overlay
+    // Show Submitting Indicator
     overlay.classList.remove('d-none');
     overlay.classList.add('d-flex');
+    stepText.textContent = "Submitting commercial order request...";
+    progressBar.style.width = "100%";
     submitBtn.disabled = true;
-
-    // Simulate progressive telemetry steps
-    setTimeout(() => {
-        stepText.textContent = "Scanning verified farmer harvest listings across Sri Lanka...";
-        progressBar.style.width = "60%";
-    }, 600);
-
-    setTimeout(() => {
-        stepText.textContent = "Calculating fair-trade price bounds & Gemini AI reasoning...";
-        progressBar.style.width = "85%";
-    }, 1200);
 
     try {
         const response = await fetch('../api/place_order.php', {
@@ -214,20 +205,8 @@ document.getElementById('orderForm').addEventListener('submit', async function(e
 
         const res = await response.json();
 
-        progressBar.style.width = "100%";
-
         if (res.success) {
-            if (res.matched && res.order_id) {
-                stepText.textContent = "AI Match Found! Redirecting to deal review...";
-                setTimeout(() => {
-                    window.location.href = `matches.php?order_id=${res.order_id}`;
-                }, 800);
-            } else {
-                stepText.textContent = "Order placed! Queued for candidate matchmaking...";
-                setTimeout(() => {
-                    window.location.href = `orders.php?order_id=${res.order_id}&status=queued`;
-                }, 800);
-            }
+            window.location.href = `orders.php?status=pending`;
         } else {
             overlay.classList.add('d-none');
             overlay.classList.remove('d-flex');
