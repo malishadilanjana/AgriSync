@@ -54,8 +54,10 @@ function getUserRole(): ?string {
  * @return void
  */
 function jsonResponse(bool $success, mixed $data = [], ?string $error = null, int $status_code = 200): void {
-    http_response_code($status_code);
-    header('Content-Type: application/json; charset=utf-8');
+    if (!headers_sent()) {
+        http_response_code($status_code);
+        header('Content-Type: application/json; charset=utf-8');
+    }
     echo json_encode([
         'success' => $success,
         'data'    => $data,
@@ -144,7 +146,23 @@ function getStatusBadgeClass(string $status): string {
         'accepted', 'available'                    => 'badge-accepted',
         'in transit', 'in_transit'                 => 'badge-in-transit',
         'delivered', 'sold', 'fulfilled', 'completed' => 'badge-delivered',
-        'cancelled', 'rejected'                    => 'badge-cancelled',
+        'cancelled', 'rejected', 'expired'         => 'badge-cancelled',
         default                                    => 'badge-status-secondary',
     };
+}
+
+/**
+ * Send an SMS message (Mock implementation for SMS gateway logging)
+ * 
+ * @param string|null $phone
+ * @param string $message
+ * @return bool
+ */
+function send_sms(?string $phone, string $message): bool {
+    $clean_phone = trim((string)$phone);
+    if (empty($clean_phone)) {
+        $clean_phone = '+94770000000';
+    }
+    error_log("SMS to {$clean_phone}: {$message}");
+    return true;
 }

@@ -242,6 +242,8 @@ document.addEventListener('DOMContentLoaded', () => {
             let statusBadge = `<span class="badge bg-secondary extra-small text-capitalize">${st}</span>`;
             if (st === 'proposed') statusBadge = `<span class="badge bg-warning-subtle text-warning border border-warning extra-small"><i class="bi bi-clock me-1"></i>Pending Review</span>`;
             if (st === 'accepted') statusBadge = `<span class="badge bg-success-subtle text-success border border-success extra-small"><i class="bi bi-check2-circle me-1"></i>Accepted</span>`;
+            if (st === 'in_transit') statusBadge = `<span class="badge bg-info-subtle text-info border border-info extra-small"><i class="bi bi-truck me-1"></i>In Transit</span>`;
+            if (st === 'delivered' || st === 'completed') statusBadge = `<span class="badge bg-success text-white extra-small"><i class="bi bi-patch-check-fill me-1"></i>Delivered (Escrow Released)</span>`;
             if (st === 'rejected') statusBadge = `<span class="badge bg-danger-subtle text-danger border border-danger extra-small"><i class="bi bi-x-circle me-1"></i>Declined</span>`;
 
             return `
@@ -287,18 +289,59 @@ document.addEventListener('DOMContentLoaded', () => {
                                         <i class="bi bi-check-lg me-1"></i> Accept Deal
                                     </button>
                                 </div>
+                            ` : (st === 'accepted' ? `
+                                <div class="d-flex gap-2">
+                                    <button type="button" class="btn btn-sm btn-info text-white px-3 btn-dispatch-action" data-match-id="${m.id}">
+                                        <i class="bi bi-truck me-1"></i> Mark as Dispatched
+                                    </button>
+                                </div>
                             ` : `
                                 <div>
                                     <a href="<?= APP_URL ?>/farmer/orders.php" class="btn btn-sm btn-outline-secondary">
                                         <i class="bi bi-eye me-1"></i> View in Orders
                                     </a>
                                 </div>
-                            `}
+                            `)}
                         </div>
                     </div>
                 </div>
             `;
         }).join('');
+
+        // Attach dispatch action handlers
+        document.querySelectorAll('.btn-dispatch-action').forEach(btn => {
+            btn.addEventListener('click', async () => {
+                const matchId = btn.getAttribute('data-match-id');
+                btn.disabled = true;
+                btn.innerHTML = '<span class="spinner-border spinner-border-sm me-1"></span> Updating...';
+
+                try {
+                    const res = await fetch('<?= APP_URL ?>/api/update_delivery_status.php', {
+                        method: 'POST',
+                        headers: { 
+                            'Content-Type': 'application/json',
+                            'X-CSRF-TOKEN': csrfToken 
+                        },
+                        body: JSON.stringify({
+                            match_id: parseInt(matchId),
+                            status: 'in_transit',
+                            csrf_token: csrfToken
+                        })
+                    });
+                    const result = await res.json();
+                    if (result.success) {
+                        if (typeof showToast === 'function') showToast(result.data.message || 'Order marked as In Transit!', 'success');
+                        loadOffers();
+                    } else {
+                        if (typeof showToast === 'function') showToast(result.error || 'Failed to update status.', 'error');
+                        btn.disabled = false;
+                    }
+                } catch (err) {
+                    if (typeof showToast === 'function') showToast('Server error updating delivery status.', 'error');
+                    btn.disabled = false;
+                }
+            });
+        });
 
         // Attach action handlers
         document.querySelectorAll('.btn-offer-action').forEach(btn => {

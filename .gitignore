@@ -2,6 +2,7 @@ config/constants.php
 uploads/
 backups/*.sql
 backups/*.sql.gz
+backups/*.json
 .env
 *.log
 .DS_Store

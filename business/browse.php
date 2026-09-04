@@ -184,8 +184,8 @@ require_once __DIR__ . '/../includes/navbar.php';
                                     </div>
 
                                     <div class="mt-auto pt-2">
-                                        <a href="place_order.php?crop=<?= urlencode($item['crop_type']) ?>&max_price=<?= (float)$item['price_per_kg'] ?>&listing_id=<?= (int)$item['id'] ?>" class="btn btn-primary w-100 rounded-3 py-2 fw-semibold">
-                                            <i class="bi bi-cart-plus me-1"></i> Order This Produce
+                                        <a href="place_order.php?crop_type=<?= urlencode($item['crop_type']) ?>&quantity_preset=<?= (float)$item['quantity_kg'] ?>&farmer_id=<?= (int)$item['farmer_id'] ?>&max_price=<?= (float)$item['price_per_kg'] ?>&listing_id=<?= (int)$item['id'] ?>" class="btn btn-primary w-100 rounded-3 py-2 fw-semibold shadow-sm">
+                                            <i class="bi bi-cart-plus-fill me-1"></i> Buy Now
                                         </a>
                                     </div>
                                 </div>

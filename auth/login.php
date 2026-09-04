@@ -31,45 +31,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $password = $_POST['password'] ?? '';
     $csrf = $_POST['csrf_token'] ?? '';
 
-    if (!validateCSRFToken($csrf)) {
-        $error = 'Security validation failed. Please try again.';
-    } elseif (empty($email_val) || empty($password)) {
-        $error = 'Please enter both your email and password.';
-    } else {
-        try {
-            $db = getDbConnection();
-            $stmt = $db->prepare("SELECT id, name, email, password_hash, role, district, phone, is_active FROM users WHERE email = :email LIMIT 1");
-            $stmt->execute([':email' => $email_val]);
-            $user = $stmt->fetch(PDO::FETCH_ASSOC);
+    // Check Rate Limiting Lockout at top of POST handler
+    if (!empty($_SESSION['lockout_time'])) {
+        if (time() < (int)$_SESSION['lockout_time']) {
+            $error = 'Account temporarily locked due to too many failed attempts. Try again later.';
+        } else {
+            // Lockout period expired
+            unset($_SESSION['lockout_time']);
+            $_SESSION['failed_attempts'] = 0;
+        }
+    }
 
-            if ($user && password_verify($password, $user['password_hash'])) {
-                if (isset($user['is_active']) && (int)$user['is_active'] === 0) {
-                    $error = 'Your account has been deactivated. Please contact platform support.';
+    if (empty($error)) {
+        if (!validateCSRFToken($csrf)) {
+            $error = 'Security validation failed. Please try again.';
+        } elseif (empty($email_val) || empty($password)) {
+            $error = 'Please enter both your email and password.';
+        } else {
+            try {
+                $db = getDbConnection();
+                $stmt = $db->prepare("SELECT id, name, email, password_hash, role, district, phone, is_active FROM users WHERE email = :email LIMIT 1");
+                $stmt->execute([':email' => $email_val]);
+                $user = $stmt->fetch(PDO::FETCH_ASSOC);
+
+                if ($user && password_verify($password, $user['password_hash'])) {
+                    if (isset($user['is_active']) && (int)$user['is_active'] === 0) {
+                        $error = 'Your account has been deactivated. Please contact platform support.';
+                    } else {
+                        // Prevent Session Fixation: Regenerate session ID immediately before setting session data
+                        session_regenerate_id(true);
+
+                        // Clear failed attempts and lockout timer
+                        unset($_SESSION['failed_attempts'], $_SESSION['lockout_time']);
+
+                        // Set session data
+                        $_SESSION['user_id'] = (int) $user['id'];
+                        $_SESSION['user_name'] = $user['name'];
+                        $_SESSION['user_email'] = $user['email'];
+                        $_SESSION['user_role'] = $user['role'];
+                        $_SESSION['user_district'] = $user['district'] ?? 'Dambulla';
+                        $_SESSION['user_phone'] = $user['phone'] ?? '';
+                        $_SESSION['last_activity'] = time();
+
+                        $app_url = defined('APP_URL') ? APP_URL : '';
+                        $target = match($user['role']) {
+                            'farmer' => $app_url . '/farmer/dashboard.php',
+                            'business' => $app_url . '/business/dashboard.php',
+                            'admin' => $app_url . '/admin/dashboard.php',
+                            default => $app_url . '/index.php'
+                        };
+                        redirect($target);
+                    }
                 } else {
-                    // Set session data
-                    $_SESSION['user_id'] = (int) $user['id'];
-                    $_SESSION['user_name'] = $user['name'];
-                    $_SESSION['user_email'] = $user['email'];
-                    $_SESSION['user_role'] = $user['role'];
-                    $_SESSION['user_district'] = $user['district'] ?? 'Dambulla';
-                    $_SESSION['user_phone'] = $user['phone'] ?? '';
-                    $_SESSION['last_activity'] = time();
-
-                    $app_url = defined('APP_URL') ? APP_URL : '';
-                    $target = match($user['role']) {
-                        'farmer' => $app_url . '/farmer/dashboard.php',
-                        'business' => $app_url . '/business/dashboard.php',
-                        'admin' => $app_url . '/admin/dashboard.php',
-                        default => $app_url . '/index.php'
-                    };
-                    redirect($target);
+                    // Record failed login attempt
+                    $_SESSION['failed_attempts'] = ((int)($_SESSION['failed_attempts'] ?? 0)) + 1;
+                    if ($_SESSION['failed_attempts'] >= 5) {
+                        $_SESSION['lockout_time'] = time() + (15 * 60); // 15-minute lockout
+                        $error = 'Account temporarily locked due to too many failed attempts. Try again later.';
+                    } else {
+                        $error = 'Invalid email address or password.';
+                    }
                 }
-            } else {
-                $error = 'Invalid email address or password.';
+            } catch (Throwable $e) {
+                error_log("Login Error: " . $e->getMessage());
+                $error = 'Authentication system temporarily unavailable.';
             }
-        } catch (Throwable $e) {
-            error_log("Login Error: " . $e->getMessage());
-            $error = 'Authentication system temporarily unavailable.';
         }
     }
 }
@@ -127,6 +153,7 @@ require_once __DIR__ . '/../includes/header.php';
                     <div class="mb-4">
                         <div class="d-flex justify-content-between align-items-center mb-1">
                             <label for="passwordInput" class="form-label small fw-semibold text-muted mb-0">Password</label>
+                            <a href="forgot_password.php" class="text-success small text-decoration-none">Forgot password?</a>
                         </div>
                         <div class="input-group">
                             <span class="input-group-text bg-light border-end-0 text-muted"><i class="bi bi-lock"></i></span>

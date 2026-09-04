@@ -1,7 +1,7 @@
 <?php
 /**
  * AgriSync — Database Backup Script Test Suite
- * Tests cron/db_backup.php functionality, file output, .htaccess protection, and retention policy.
+ * Tests cron/db_backup.php functionality, file output, .htaccess protection, streaming PDO fallback, and authorization security.
  */
 
 require_once __DIR__ . '/../config/constants.php';
@@ -45,8 +45,19 @@ assertTest(
     "backups/.htaccess contains web access denial rule ('Deny from all')"
 );
 
-// 2. Test execution of cron/db_backup.php via CLI
-echo "\n2. Testing cron/db_backup.php Execution & Response Structure...\n";
+// 2. Test Authorization Logic (Preventing Fail-Open on Web Requests)
+echo "\n2. Testing Authorization Security (Web Fail-Open Prevention)...\n";
+// Unauthenticated web request test using stream context to handle HTTP 403 Forbidden
+$http_context = stream_context_create(['http' => ['ignore_errors' => true]]);
+$unauth_response = @file_get_contents('http://localhost:8000/cron/db_backup.php', false, $http_context);
+$unauth_json = json_decode($unauth_response, true);
+
+assertTest(is_array($unauth_json), "Unauthenticated web request returns valid JSON response");
+assertTest(isset($unauth_json['success']) && $unauth_json['success'] === false, "Unauthenticated web request is rejected (success=false)");
+assertTest(!empty($unauth_json['error']) && str_contains($unauth_json['error'], 'Unauthorized access'), "Unauthenticated web request returns 403 Unauthorized error message");
+
+// 3. Test execution of cron/db_backup.php via CLI (Server Crontab Context)
+echo "\n3. Testing CLI Cron Execution & Response Structure...\n";
 $php_binary = 'C:\\xampp\\php\\php.exe';
 if (!file_exists($php_binary)) {
     $php_binary = 'php';
@@ -60,13 +71,18 @@ exec($cmd, $output_lines, $return_code);
 $output_text = implode("\n", $output_lines);
 $json_data = json_decode($output_text, true);
 
-assertTest(is_array($json_data), "Backup script returns valid JSON");
-assertTest(isset($json_data['success']), "JSON response contains 'success' boolean key");
-assertTest(array_key_exists('data', $json_data), "JSON response contains 'data' key");
-assertTest(array_key_exists('error', $json_data), "JSON response contains 'error' key");
+assertTest(is_array($json_data), "CLI backup script returns valid JSON");
+assertTest($json_data['success'] === true, "CLI backup script succeeds (success=true)");
+assertTest(isset($json_data['data']['backup_file']), "Response contains generated backup filename");
+assertTest(file_exists($backup_dir . '/' . $json_data['data']['backup_file']), "Generated .sql.gz backup file exists on disk");
 
-// 3. Test Retention Policy (Pruning Backups Older Than 7 Days)
-echo "\n3. Testing Retention Policy (Pruning Backups Older Than 7 Days)...\n";
+// Cleanup generated backup file
+if (isset($json_data['data']['backup_file']) && file_exists($backup_dir . '/' . $json_data['data']['backup_file'])) {
+    @unlink($backup_dir . '/' . $json_data['data']['backup_file']);
+}
+
+// 4. Test Retention Policy (Pruning Backups Older Than 7 Days)
+echo "\n4. Testing Retention Policy (Pruning Backups Older Than 7 Days)...\n";
 $old_dummy_file = $backup_dir . '/backup_20200101_000000.sql.gz';
 $new_dummy_file = $backup_dir . '/backup_' . date('Ymd_His') . '_test.sql.gz';
 
@@ -79,13 +95,13 @@ touch($new_dummy_file, time() - (2 * 86400)); // 2 days old
 assertTest(file_exists($old_dummy_file), "Created test dummy backup file > 7 days old");
 assertTest(file_exists($new_dummy_file), "Created test dummy backup file <= 7 days old");
 
-// Re-run script to trigger retention policy pruning
+// Re-run script via CLI to trigger retention policy pruning
 exec($cmd, $output_lines_2, $return_code_2);
 
 assertTest(!file_exists($old_dummy_file), "Retention policy successfully pruned backup file older than 7 days");
 assertTest(file_exists($new_dummy_file), "Retention policy retained backup file newer than 7 days");
 
-// Cleanup test dummy file
+// Cleanup test dummy files
 if (file_exists($new_dummy_file)) {
     @unlink($new_dummy_file);
 }
@@ -93,8 +109,8 @@ if (file_exists($old_dummy_file)) {
     @unlink($old_dummy_file);
 }
 
-// 4. Verification of .sql.gz Dump format and integrity
-echo "\n4. Verifying GZIP Backup File Format and Integrity...\n";
+// 5. Verification of .sql.gz Dump format and integrity
+echo "\n5. Verifying GZIP Backup File Format and Integrity...\n";
 $test_sql = "-- AgriSync Test Database Dump\nCREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100));\nINSERT INTO users VALUES (1, 'Test Farmer');\n";
 $test_gz_file = $backup_dir . '/backup_' . date('Ymd_His') . '.sql.gz';
 file_put_contents($test_gz_file, gzencode($test_sql));

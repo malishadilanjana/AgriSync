@@ -14,6 +14,7 @@ if (!defined('APP_NAME')) {
     require_once __DIR__ . '/../config/constants.php';
 }
 require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/functions.php';
 require_once __DIR__ . '/gemini_client.php';
 require_once __DIR__ . '/agent_logger.php';
 
@@ -160,6 +161,11 @@ class BrokerAgent {
                 "✨ AI Broker found a match with farmer {$selectedCandidate['farmer_name']} ({$selectedCandidate['farmer_district']}) for your {$order['crop_type']} order!",
                 "/business/orders.php"
             );
+
+            // Send SMS Alert to Farmer
+            $farmer_phone = $selectedCandidate['farmer_phone'] ?? '';
+            $sms_text = "AgriSync Alert: You have a new order match offer for {$order['crop_type']} at Rs. " . number_format($aiDecision['recommended_price_per_kg'], 2) . "/kg! Please log in to accept within 24 hours.";
+            send_sms($farmer_phone, $sms_text);
 
             AgentLogger::log('broker', '5. Match Finalized & Notifications Sent', $orderId, [
                 'match_id' => $matchId,

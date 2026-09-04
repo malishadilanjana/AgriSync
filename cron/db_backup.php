@@ -13,7 +13,18 @@ $is_cli = (php_sapi_name() === 'cli');
 if (!$is_cli) {
     header('Content-Type: application/json; charset=UTF-8');
 
-    // CSRF validation on POST requests
+    // Strict Authorization: Require authenticated Admin role or valid CRON_KEY
+    $cron_key = $_GET['key'] ?? ($_POST['key'] ?? null);
+    $configured_key = defined('CRON_KEY') ? CRON_KEY : null;
+    $is_authorized_key = (!empty($configured_key) && !empty($cron_key) && hash_equals($configured_key, (string)$cron_key));
+
+    $is_admin = (isLoggedIn() && function_exists('getUserRole') && getUserRole() === 'admin');
+
+    if (!$is_admin && !$is_authorized_key) {
+        jsonResponse(false, null, 'Unauthorized access. Admin privileges required.', 403);
+    }
+
+    // CSRF validation on POST web requests
     if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $raw_input = file_get_contents('php://input');
         $input_data = json_decode($raw_input, true);
@@ -25,14 +36,6 @@ if (!$is_cli) {
             if (!validateCSRFToken($submitted_csrf)) {
                 jsonResponse(false, null, 'CSRF security token verification failed.', 403);
             }
-        }
-    }
-
-    // Role check if user is logged in via session
-    if (isLoggedIn() && function_exists('getUserRole')) {
-        $user_role = getUserRole();
-        if ($user_role !== 'admin') {
-            jsonResponse(false, null, 'Unauthorized access. Admin privileges required.', 403);
         }
     }
 }
@@ -104,7 +107,7 @@ try {
     $return_code = -1;
     @exec($mysqldump_cmd, $output_lines, $return_code);
 
-    // Fallback: If mysqldump exec fails or yields empty file, attempt PDO dump
+    // Fallback: If mysqldump exec fails or yields empty file, stream PDO dump to file (Zero Memory Buffering)
     if ($return_code !== 0 || !file_exists($sql_path) || filesize($sql_path) === 0) {
         $pdo = getDbConnection();
         $tables = [];
@@ -112,24 +115,30 @@ try {
         $stmt_tables->execute();
         $tables = $stmt_tables->fetchAll(PDO::FETCH_COLUMN);
 
-        $sql_dump = "-- AgriSync Database Dump (PDO Fallback)\n";
-        $sql_dump .= "-- Generated: " . date('Y-m-d H:i:s') . "\n\n";
-        $sql_dump .= "SET FOREIGN_KEY_CHECKS=0;\n\n";
+        $file_handle = fopen($sql_path, 'w');
+        if (!$file_handle) {
+            throw new RuntimeException("Failed to create SQL dump file handle.");
+        }
+
+        fwrite($file_handle, "-- AgriSync Database Dump (PDO Fallback Stream)\n");
+        fwrite($file_handle, "-- Generated: " . date('Y-m-d H:i:s') . "\n\n");
+        fwrite($file_handle, "SET FOREIGN_KEY_CHECKS=0;\n\n");
 
         foreach ($tables as $table) {
             $stmt_create = $pdo->prepare("SHOW CREATE TABLE `" . str_replace("`", "``", $table) . "`");
             $stmt_create->execute();
             $row_create = $stmt_create->fetch(PDO::FETCH_NUM);
             if ($row_create && isset($row_create[1])) {
-                $sql_dump .= "DROP TABLE IF EXISTS `" . str_replace("`", "``", $table) . "`;\n";
-                $sql_dump .= $row_create[1] . ";\n\n";
+                fwrite($file_handle, "DROP TABLE IF EXISTS `" . str_replace("`", "``", $table) . "`;\n");
+                fwrite($file_handle, $row_create[1] . ";\n\n");
             }
 
             $stmt_rows = $pdo->prepare("SELECT * FROM `" . str_replace("`", "``", $table) . "`");
             $stmt_rows->execute();
-            $rows = $stmt_rows->fetchAll(PDO::FETCH_ASSOC);
 
-            foreach ($rows as $row) {
+            $has_rows = false;
+            while ($row = $stmt_rows->fetch(PDO::FETCH_ASSOC)) {
+                $has_rows = true;
                 $escaped_vals = [];
                 foreach ($row as $val) {
                     if ($val === null) {
@@ -138,23 +147,31 @@ try {
                         $escaped_vals[] = $pdo->quote((string)$val);
                     }
                 }
-                $sql_dump .= "INSERT INTO `" . str_replace("`", "``", $table) . "` VALUES (" . implode(", ", $escaped_vals) . ");\n";
+                fwrite($file_handle, "INSERT INTO `" . str_replace("`", "``", $table) . "` VALUES (" . implode(", ", $escaped_vals) . ");\n");
             }
-            if (!empty($rows)) {
-                $sql_dump .= "\n";
+            if ($has_rows) {
+                fwrite($file_handle, "\n");
             }
         }
-        $sql_dump .= "SET FOREIGN_KEY_CHECKS=1;\n";
-        file_put_contents($sql_path, $sql_dump);
+        fwrite($file_handle, "SET FOREIGN_KEY_CHECKS=1;\n");
+        fclose($file_handle);
     }
 
-    // 5. GZIP compression of the SQL file
+    // 5. Chunked GZIP compression (Zero Memory Buffering)
     if (file_exists($sql_path) && filesize($sql_path) > 0) {
-        $dump_content = file_get_contents($sql_path);
+        $sql_handle = fopen($sql_path, 'rb');
         $gz_handle = gzopen($gz_path, 'w9');
-        if ($gz_handle) {
-            gzwrite($gz_handle, $dump_content);
+
+        if ($sql_handle && $gz_handle) {
+            while (!feof($sql_handle)) {
+                $chunk = fread($sql_handle, 8192);
+                if ($chunk !== false && strlen($chunk) > 0) {
+                    gzwrite($gz_handle, $chunk);
+                }
+            }
+            fclose($sql_handle);
             gzclose($gz_handle);
+
             if (file_exists($gz_path) && filesize($gz_path) > 0) {
                 unlink($sql_path);
             }
