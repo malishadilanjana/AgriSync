@@ -67,12 +67,16 @@ CREATE TABLE IF NOT EXISTS `harvest_listings` (
   `quantity_kg` decimal(10,2) NOT NULL,
   `price_per_kg` decimal(10,2) NOT NULL,
   `harvest_date` date NOT NULL,
+  `quality_grade` enum('A','B','C') NOT NULL DEFAULT 'B',
+  `certifications` varchar(255) DEFAULT NULL,
+  `image_path` varchar(255) DEFAULT NULL,
   `status` enum('available','matched','sold','expired') NOT NULL DEFAULT 'available',
   `created_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP,
   `updated_at` timestamp NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   PRIMARY KEY (`id`),
   KEY `farmer_id_index` (`farmer_id`),
   KEY `crop_type_index` (`crop_type`),
+  KEY `quality_grade_index` (`quality_grade`),
   KEY `status_index` (`status`),
   CONSTRAINT `fk_harvest_farmer` FOREIGN KEY (`farmer_id`) REFERENCES `users` (`id`) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

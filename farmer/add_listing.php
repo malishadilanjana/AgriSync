@@ -1,7 +1,7 @@
 <?php
 /**
  * AgriSync — Farmer Add Harvest Listing (TASK-033)
- * Form allowing farmers to list produce with integrated AI price advisories.
+ * Form allowing farmers to list produce with quality grading, certification tracking, and secure photo upload.
  */
 
 require_once __DIR__ . '/../config/session.php';
@@ -24,7 +24,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $quantity_kg = (float) ($_POST['quantity_kg'] ?? 0);
     $price_per_kg = (float) ($_POST['price_per_kg'] ?? 0);
     $harvest_date = trim($_POST['harvest_date'] ?? '');
+    $quality_grade = strtoupper(trim($_POST['quality_grade'] ?? 'B'));
+    $certifications = trim($_POST['certifications'] ?? '');
     $csrf = $_POST['csrf_token'] ?? '';
+
+    if (!in_array($quality_grade, ['A', 'B', 'C'], true)) {
+        $quality_grade = 'B';
+    }
+
+    $image_path = null;
 
     if (!validateCSRFToken($csrf)) {
         $error = 'Invalid security token. Please refresh and try again.';
@@ -37,27 +45,71 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } elseif (empty($harvest_date)) {
         $error = 'Please select a projected harvest date.';
     } else {
-        try {
-            $db = getDbConnection();
-            $stmt = $db->prepare("
-                INSERT INTO harvest_listings 
-                    (farmer_id, crop_type, quantity_kg, price_per_kg, harvest_date, status, created_at, updated_at)
-                VALUES 
-                    (:farmer_id, :crop_type, :quantity_kg, :price_per_kg, :harvest_date, 'available', NOW(), NOW())
-            ");
-            $stmt->execute([
-                ':farmer_id' => $user_id,
-                ':crop_type' => $crop_type,
-                ':quantity_kg' => $quantity_kg,
-                ':price_per_kg' => $price_per_kg,
-                ':harvest_date' => $harvest_date
-            ]);
+        // Secure Image Upload Handling (MIME & extension validation + cryptographically secure renaming)
+        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+            $tmp_path = $_FILES['image']['tmp_name'];
+            $file_size = (int) $_FILES['image']['size'];
 
-            $app_url = defined('APP_URL') ? APP_URL : '';
-            redirect($app_url . '/farmer/listings.php?added=1');
-        } catch (Throwable $e) {
-            error_log("Add Harvest Error: " . $e->getMessage());
-            $error = 'Unable to save harvest listing. Please try again.';
+            if ($file_size > 5 * 1024 * 1024) {
+                $error = 'Harvest image size must be under 5MB.';
+            } else {
+                $finfo = finfo_open(FILEINFO_MIME_TYPE);
+                $mime_type = finfo_file($finfo, $tmp_path);
+                finfo_close($finfo);
+
+                $allowed_mimes = [
+                    'image/jpeg' => 'jpg',
+                    'image/png'  => 'png',
+                    'image/webp' => 'webp'
+                ];
+
+                if (!isset($allowed_mimes[$mime_type])) {
+                    $error = 'Invalid image file format. Only JPG, PNG, and WebP images are allowed.';
+                } else {
+                    $ext = $allowed_mimes[$mime_type];
+                    $new_filename = bin2hex(random_bytes(16)) . '.' . $ext;
+                    $upload_dir = __DIR__ . '/../uploads/crops/';
+
+                    if (!is_dir($upload_dir)) {
+                        mkdir($upload_dir, 0755, true);
+                    }
+
+                    $dest_path = $upload_dir . $new_filename;
+                    if (move_uploaded_file($tmp_path, $dest_path)) {
+                        $image_path = 'uploads/crops/' . $new_filename;
+                    } else {
+                        $error = 'Failed to save uploaded harvest image.';
+                    }
+                }
+            }
+        }
+
+        if (empty($error)) {
+            try {
+                $db = getDbConnection();
+                $stmt = $db->prepare("
+                    INSERT INTO harvest_listings 
+                        (farmer_id, crop_type, quantity_kg, price_per_kg, harvest_date, quality_grade, certifications, image_path, status, created_at, updated_at)
+                    VALUES 
+                        (:farmer_id, :crop_type, :quantity_kg, :price_per_kg, :harvest_date, :quality_grade, :certifications, :image_path, 'available', NOW(), NOW())
+                ");
+                $stmt->execute([
+                    ':farmer_id'     => $user_id,
+                    ':crop_type'     => $crop_type,
+                    ':quantity_kg'   => $quantity_kg,
+                    ':price_per_kg'  => $price_per_kg,
+                    ':harvest_date'  => $harvest_date,
+                    ':quality_grade' => $quality_grade,
+                    ':certifications'=> !empty($certifications) ? $certifications : null,
+                    ':image_path'    => $image_path
+                ]);
+
+                $app_url = defined('APP_URL') ? APP_URL : '';
+                redirect($app_url . '/farmer/listings.php?added=1');
+            } catch (Throwable $e) {
+                error_log("Add Harvest Error: " . $e->getMessage());
+                $error = 'Unable to save harvest listing. Please try again.';
+            }
         }
     }
 }
@@ -90,7 +142,7 @@ require_once __DIR__ . '/../includes/navbar.php';
                     </div>
                     <div>
                         <h3 class="fw-bold text-dark mb-1">List New Harvest Produce</h3>
-                        <p class="text-muted small mb-0">Publish your upcoming or ready harvest to connect with commercial wholesale buyers.</p>
+                        <p class="text-muted small mb-0">Publish your upcoming or ready harvest with quality grading & certifications to connect with commercial buyers.</p>
                     </div>
                 </div>
 
@@ -101,7 +153,7 @@ require_once __DIR__ . '/../includes/navbar.php';
                     </div>
                 <?php endif; ?>
 
-                <form method="POST" action="add_listing.php" novalidate>
+                <form method="POST" action="add_listing.php" enctype="multipart/form-data" novalidate>
                     <input type="hidden" name="csrf_token" value="<?= generateCSRFToken() ?>">
 
                     <div class="row g-4 mb-4">
@@ -137,6 +189,25 @@ require_once __DIR__ . '/../includes/navbar.php';
                             <small class="text-muted d-block mt-1" id="priceGuideText">
                                 <i class="bi bi-info-circle me-1"></i> Suggested wholesale range: Rs. 150 - 220/kg
                             </small>
+                        </div>
+
+                        <div class="col-12 col-md-4">
+                            <label for="gradeSelect" class="form-label small fw-semibold text-muted">Quality Grade</label>
+                            <select name="quality_grade" id="gradeSelect" class="form-select rounded-3">
+                                <option value="A">Grade A (Premium / Export Quality)</option>
+                                <option value="B" selected>Grade B (Standard Retail)</option>
+                                <option value="C">Grade C (Industrial / Processing)</option>
+                            </select>
+                        </div>
+
+                        <div class="col-12 col-md-4">
+                            <label for="certInput" class="form-label small fw-semibold text-muted">Certifications (Optional)</label>
+                            <input type="text" name="certifications" id="certInput" class="form-control rounded-3" placeholder="e.g. GAP Certified, Organic">
+                        </div>
+
+                        <div class="col-12 col-md-4">
+                            <label for="imageInput" class="form-label small fw-semibold text-muted">Harvest Photo (Optional)</label>
+                            <input type="file" name="image" id="imageInput" class="form-control rounded-3" accept="image/jpeg,image/png,image/webp">
                         </div>
                     </div>
 

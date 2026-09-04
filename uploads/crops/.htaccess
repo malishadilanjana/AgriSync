@@ -1,0 +1,20 @@
+# AgriSync Secure Upload Directory Rules
+# Disable PHP execution and script engine to prevent web shell / malicious file execution
+
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+
+Options -ExecCGI -Indexes
+RemoveHandler .php .phtml .php3 .php4 .php5 .php7 .php8 .phps
+
+<FilesMatch "\.(php|phtml|php3|php4|php5|php7|php8|phps|cgi|pl|exe|sh)$">
+    Order allow,deny
+    Deny from all
+</FilesMatch>

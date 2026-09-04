@@ -2,6 +2,7 @@
 /**
  * AgriSync — Browse Farm Produce Catalog (TASK-043)
  * Real-time agricultural produce marketplace connecting commercial buyers directly to producers.
+ * Includes quality grading (Grade A/B/C), certifications, and verified crop photo display.
  */
 
 require_once __DIR__ . '/../config/session.php';
@@ -16,6 +17,7 @@ requireRole('business');
 $page_title = 'Browse Farm Produce';
 $crop_filter = sanitize($_GET['crop'] ?? '');
 $district_filter = sanitize($_GET['district'] ?? '');
+$grade_filter = sanitize($_GET['grade'] ?? '');
 $sort_by = sanitize($_GET['sort'] ?? 'newest');
 
 $listings = [];
@@ -27,7 +29,7 @@ try {
 
     $sql = "
         SELECT 
-            h.id, h.crop_type, h.quantity_kg, h.price_per_kg, h.harvest_date, h.status, h.created_at,
+            h.id, h.crop_type, h.quantity_kg, h.price_per_kg, h.harvest_date, h.quality_grade, h.certifications, h.image_path, h.status, h.created_at,
             u.id as farmer_id, u.name as farmer_name, u.district as farmer_district, u.phone as farmer_phone
         FROM harvest_listings h
         JOIN users u ON h.farmer_id = u.id
@@ -43,6 +45,11 @@ try {
     if (!empty($district_filter)) {
         $sql .= " AND u.district = :district";
         $params[':district'] = $district_filter;
+    }
+
+    if (!empty($grade_filter) && in_array($grade_filter, ['A', 'B', 'C'], true)) {
+        $sql .= " AND h.quality_grade = :grade";
+        $params[':grade'] = $grade_filter;
     }
 
     if ($sort_by === 'price_asc') {
@@ -83,7 +90,7 @@ require_once __DIR__ . '/../includes/navbar.php';
                         <i class="bi bi-shop text-success me-2"></i> Produce Marketplace Catalog
                     </h1>
                     <p class="text-muted small mb-0">
-                        Discover fresh harvests direct from verified Sri Lankan smallholder producers with zero intermediary markups.
+                        Discover fresh harvests direct from verified Sri Lankan smallholder producers with quality grades (A/B/C) and certifications.
                     </p>
                 </div>
                 <div class="d-flex gap-2 mt-3 mt-md-0">
@@ -96,7 +103,7 @@ require_once __DIR__ . '/../includes/navbar.php';
             <!-- Filters Bar -->
             <div class="card border-0 shadow-sm rounded-4 p-3 mb-4 bg-white">
                 <form method="GET" action="browse.php" class="row g-3 align-items-end">
-                    <div class="col-12 col-sm-6 col-md-4">
+                    <div class="col-12 col-sm-6 col-md-3">
                         <label class="form-label small text-muted mb-1 fw-semibold">Filter by Crop</label>
                         <select name="crop" class="form-select rounded-3">
                             <option value="">All Crops</option>
@@ -106,13 +113,23 @@ require_once __DIR__ . '/../includes/navbar.php';
                         </select>
                     </div>
 
-                    <div class="col-12 col-sm-6 col-md-4">
+                    <div class="col-12 col-sm-6 col-md-3">
                         <label class="form-label small text-muted mb-1 fw-semibold">District Hub</label>
                         <select name="district" class="form-select rounded-3">
                             <option value="">All Districts</option>
                             <?php foreach ($districts as $d): ?>
                                 <option value="<?= $d ?>" <?= $district_filter === $d ? 'selected' : '' ?>><?= $d ?></option>
                             <?php endforeach; ?>
+                        </select>
+                    </div>
+
+                    <div class="col-12 col-sm-6 col-md-2">
+                        <label class="form-label small text-muted mb-1 fw-semibold">Quality Grade</label>
+                        <select name="grade" class="form-select rounded-3">
+                            <option value="">All Grades</option>
+                            <option value="A" <?= $grade_filter === 'A' ? 'selected' : '' ?>>Grade A (Premium)</option>
+                            <option value="B" <?= $grade_filter === 'B' ? 'selected' : '' ?>>Grade B (Standard)</option>
+                            <option value="C" <?= $grade_filter === 'C' ? 'selected' : '' ?>>Grade C (Processing)</option>
                         </select>
                     </div>
 
@@ -149,13 +166,38 @@ require_once __DIR__ . '/../includes/navbar.php';
                 <?php else: ?>
                     <?php foreach ($listings as $item): ?>
                         <div class="col-12 col-sm-6 col-lg-4">
-                            <div class="card border-0 shadow-sm rounded-4 h-100 bg-white hover-shadow transition">
+                            <div class="card border-0 shadow-sm rounded-4 h-100 bg-white hover-shadow transition overflow-hidden">
+                                <?php if (!empty($item['image_path'])): ?>
+                                    <div style="height: 180px; overflow: hidden;" class="bg-light position-relative">
+                                        <img src="../<?= htmlspecialchars($item['image_path'], ENT_QUOTES, 'UTF-8') ?>" alt="<?= htmlspecialchars($item['crop_type'], ENT_QUOTES, 'UTF-8') ?>" class="w-100 h-100" style="object-fit: cover;">
+                                        <span class="position-absolute top-0 end-0 m-2 badge bg-dark bg-opacity-75 rounded-pill px-2 py-1 small">
+                                            Grade <?= htmlspecialchars($item['quality_grade'] ?? 'B', ENT_QUOTES, 'UTF-8') ?>
+                                        </span>
+                                    </div>
+                                <?php endif; ?>
+
                                 <div class="card-body p-4 d-flex flex-column">
                                     <div class="d-flex justify-content-between align-items-start mb-3">
                                         <div>
-                                            <span class="badge bg-success-subtle text-success rounded-pill px-2 py-1 small fw-semibold">
-                                                Direct Farm Produce
-                                            </span>
+                                            <div class="d-flex flex-wrap gap-1 align-items-center mb-1">
+                                                <?php
+                                                    $grade = strtoupper($item['quality_grade'] ?? 'B');
+                                                    $gradeClass = match($grade) {
+                                                        'A' => 'bg-success text-white',
+                                                        'B' => 'bg-primary-subtle text-primary',
+                                                        'C' => 'bg-secondary-subtle text-secondary',
+                                                        default => 'bg-light text-dark'
+                                                    };
+                                                ?>
+                                                <span class="badge <?= $gradeClass ?> rounded-pill px-2 py-1 small fw-semibold">
+                                                    <i class="bi bi-award-fill me-1"></i>Grade <?= htmlspecialchars($grade, ENT_QUOTES, 'UTF-8') ?>
+                                                </span>
+                                                <?php if (!empty($item['certifications'])): ?>
+                                                    <span class="badge bg-info-subtle text-info-emphasis rounded-pill px-2 py-1 small fw-semibold">
+                                                        <i class="bi bi-patch-check-fill me-1"></i><?= htmlspecialchars($item['certifications'], ENT_QUOTES, 'UTF-8') ?>
+                                                    </span>
+                                                <?php endif; ?>
+                                            </div>
                                             <h4 class="fw-bold text-dark mb-0 mt-1"><?= htmlspecialchars($item['crop_type'], ENT_QUOTES, 'UTF-8') ?></h4>
                                         </div>
                                         <div class="text-end">
