@@ -22,7 +22,7 @@ try {
 
     // 1. Fetch proposed matches older than 24 hours
     $stmt_stale = $db->prepare("
-        SELECT id, order_id, listing_id, farmer_id, business_id, matched_price
+        SELECT id, order_id, listing_id, farmer_id, business_id, matched_price, matched_quantity
         FROM order_matches
         WHERE status = 'proposed'
           AND created_at < (NOW() - INTERVAL 24 HOUR)
@@ -44,11 +44,12 @@ try {
         $stmt_expire_matches->execute();
 
         foreach ($stale_matches as $match) {
-            $match_id    = (int) $match['id'];
-            $order_id    = (int) $match['order_id'];
-            $listing_id  = (int) $match['listing_id'];
-            $farmer_id   = (int) $match['farmer_id'];
-            $business_id = (int) $match['business_id'];
+            $match_id     = (int) $match['id'];
+            $order_id     = (int) $match['order_id'];
+            $listing_id   = (int) $match['listing_id'];
+            $farmer_id    = (int) $match['farmer_id'];
+            $business_id  = (int) $match['business_id'];
+            $matched_qty  = (float) ($match['matched_quantity'] ?? 0);
 
             // 3. Reset order_request status back to 'pending' so AI broker can re-match
             $stmt_reset_order = $db->prepare("
@@ -58,13 +59,19 @@ try {
             ");
             $stmt_reset_order->execute([':id' => $order_id]);
 
-            // 4. Release harvest listing back to 'available'
+            // 4. Release harvest listing quantity_reserved back and restore 'available' status
             $stmt_release_listing = $db->prepare("
                 UPDATE harvest_listings
-                SET status = 'available', updated_at = NOW()
+                SET quantity_reserved = GREATEST(0.00, quantity_reserved - :qty1),
+                    status = IF((quantity_kg - GREATEST(0.00, quantity_reserved - :qty2)) > 0, 'available', status),
+                    updated_at = NOW()
                 WHERE id = :id
             ");
-            $stmt_release_listing->execute([':id' => $listing_id]);
+            $stmt_release_listing->execute([
+                ':qty1' => $matched_qty,
+                ':qty2' => $matched_qty,
+                ':id'   => $listing_id
+            ]);
 
             // 5. Send In-App Notifications
             $msg_farmer = "Match offer #ORD-{$order_id} has expired due to 24-hour response timeout. Your harvest listing has been restored to available status.";
